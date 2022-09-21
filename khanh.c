@@ -32,8 +32,10 @@ int nwds;				   /* # of words in the command line */
 char path[MAXWORDLEN];	   /* path to the command */
 char *argv[NWORDS + 1];	   /* argv structure for execve */
 
-bool isPipe = false;
+int isPipe = 0;
 int numberOfPipe = 0;
+char pipeLine[2][MAXLINELEN + 1]; /* input pipe line */
+int pipeIndex = 0; 
 
 /*------------------------------------------------------------------*/
 /* Get a line from the standard input. Return 1 on success, or 0 at */
@@ -91,9 +93,9 @@ int Getline(void)
 			if (c != ' ' && c != '\t') /* was input not whitespace? */
 				gotnb = 1;
 
-			if (c.strcmp("|"))
+			if (c == '|')
 			{
-				isPipe = true;
+				isPipe = 1;
 				numberOfPipe++;
 			}
 
@@ -128,44 +130,84 @@ int parse(void)
 	char *p;   /* pointer to current word */
 	char *msg; /* error message */
 
+	printf("Number of pipes: %d \n", numberOfPipe);
+
 	if (numberOfPipe > 0)
 	{
-		char cmds[numberOfPipe][MAXLINELEN + 1];
 		int index = 0;
 		char *pipe;
-		pipe = strtok(line, " |");
+		pipe = strtok(line, "|");
+		nwds = 0;
 		while (pipe != NULL)
 		{
-			strcpy(cmds[index], pipe);
+			if(index != 0)
+				pipeIndex = nwds;
+
+			strcpy(pipeLine[index], pipe);
 			index++;
-			pipe = strtok(NULL, " |");
+			pipe = strtok(NULL, "|");
 			printf("Inside parse for PIPE : ");
-			printf("The command is: %s \n", cmds[index - 1]);
+			printf("The command is: %s \n", pipeLine[index - 1]);
+
+			// split into words 
+			p = strtok(pipeLine[index - 1], " \t");
+			while (p != NULL)
+			{
+				if (nwds == NWORDS)
+				{
+					msg = "*** ERROR: Too many words.\n";
+					write(2, msg, strlen(msg));
+					return 0;
+				}
+				if (strlen(p) >= MAXWORDLEN)
+				{
+					msg = "*** ERROR: Word too long.\n";
+					write(2, msg, strlen(msg));
+					return 0;
+				}
+				printf("Word %d is %s \n", nwds + 1, p);
+				words[nwds] = p;		 /* save pointer to the word */
+				nwds++;					 /* increase the word count */
+				p = strtok(NULL, " \t"); /* get pointer to next word, if any */
+			}
+		}
+
+		printf("Outside of parse pipe \n");
+
+		// Print out words
+
+		size_t numwords = sizeof(words) / sizeof(words[0]);
+		for (size_t i = 0; i < numwords; i++){
+			if(words[i] == NULL) break;
+			printf("Word : %s \n", words[i]);
+		}
+		printf("Slit at index: %d \n", pipeIndex);
+
+		return 1;
+	}
+	else{	// If there is no pipe
+		nwds = 0;
+		p = strtok(line, " \t");
+		while (p != NULL)
+		{
+			if (nwds == NWORDS)
+			{
+				msg = "*** ERROR: Too many words.\n";
+				write(2, msg, strlen(msg));
+				return 0;
+			}
+			if (strlen(p) >= MAXWORDLEN)
+			{
+				msg = "*** ERROR: Word too long.\n";
+				write(2, msg, strlen(msg));
+				return 0;
+			}
+			words[nwds] = p;		 /* save pointer to the word */
+			nwds++;					 /* increase the word count */
+			p = strtok(NULL, " \t"); /* get pointer to next word, if any */
 		}
 		return 1;
 	}
-
-	nwds = 0;
-	p = strtok(line, " \t");
-	while (p != NULL)
-	{
-		if (nwds == NWORDS)
-		{
-			msg = "*** ERROR: Too many words.\n";
-			write(2, msg, strlen(msg));
-			return 0;
-		}
-		if (strlen(p) >= MAXWORDLEN)
-		{
-			msg = "*** ERROR: Word too long.\n";
-			write(2, msg, strlen(msg));
-			return 0;
-		}
-		words[nwds] = p;		 /* save pointer to the word */
-		nwds++;					 /* increase the word count */
-		p = strtok(NULL, " \t"); /* get pointer to next word, if any */
-	}
-	return 1;
 }
 
 /*--------------------------------------------------------------------------*/
@@ -224,42 +266,146 @@ int execute(void)
 	int i, j;
 	int status;
 	char *msg;
+	char *cmd[NWORDS];
+	char *cmd2[NWORDS];
 
-	if (execok() == 0)
-	{					 /* is it executable? */
-		status = fork(); /* yes; create a new process */
+	if(numberOfPipe > 0){	// Pipe
+		if (execok() == 0){
 
-		if (status == -1)
-		{ /* verify fork succeeded */
-			perror("fork");
-			exit(1);
+			printf("Inside execute for PIPE: Horray! \n");
+			int fd[2];
+			if (pipe(fd) == -1){
+				printf("Error occured with opening pipe \n");
+				return 1;
+			}
+
+			status = fork();
+
+			if(status == 0){ // Child process
+				printf("Inside the first child process \n");
+				// dup2(fd[1], STDOUT_FILENO);
+				// close(fd[1]);
+				// close(fd[0]);
+				printf("Inside the first child process \n");
+				for(size_t i = 0; i < pipeIndex; i++){
+					printf("%s ", words[i]);
+					cmd[i] = words[i];
+				}
+				printf("\n");
+				printf("Inside the first child process \n");
+				cmd[pipeIndex] = NULL; // Mark the end
+				status = execve(path, cmd, environ); // Execute
+				perror("execve"); /* we only get here if */
+				exit(0);
+
+
+				// for (size_t i = pipeIndex; i < NWORDS; i++){
+				// 	if (words[i] != NULL){
+				// 		dprintf(fd[1], "%s ", words[i]);
+				// 	}else{
+				// 		break;
+				// 	}
+				// }
+
+				// for(size_t i = 0; i < pipeIndex; i++){
+				// 		cmd[i] = words[i];
+				// 	}
+
+				// cmd[pipeIndex] = NULL; // Mark the end
+
+				// for(size_t i = 0; i < pipeIndex; i++){
+				// 	printf("Word: %s \n", cmd[i]);
+				// }
+
+				// status = execve(path, cmd, environ); // Execute
+				// perror("execve"); /* we only get here if */
+				// exit(0);
+			}
+			// waitpid(status, NULL, 0);
+
+			int pid2 = fork();
+			if(pid2 < 0){
+				return 2;
+			}
+			
+			if(pid2 ==0){
+				printf("Inside the second child process \n");
+				dup2(fd[0], STDIN_FILENO);
+				int j = 0;
+				while(words[pipeIndex] != NULL){
+					printf("%s ", words[pipeIndex]);
+					cmd2[j] = words[pipeIndex];
+					pipeIndex++;
+					j++;
+				}
+				cmd2[j] = NULL; // Mark the end
+				pid2 = execve(path, cmd2, environ); // Execute
+				perror("execve"); /* we only get here if */
+				exit(0);
+
+				close(fd[0]);
+				close(fd[1]);
+			}
+
+			// close(fd[1]);
+			// close(fd[0]);
+			// waitpid(pid2, NULL, 0);
+			// printf("This is parent process");
+			// return 0;
+
+			//parent
+			close(fd[0]); // Close the parent read
+			printf("Inside the parent process \n");
+
+			
+			close(fd[1]);
+			wait(&status);
+			wait(&pid2);
+
+			int stat;
+			pid_t wpid = waitpid (status , &stat, 0 ); // wait for child to finish before exiting
+			return wpid == status && WIFEXITED(stat) ? WEXITSTATUS(stat) : 1;
+				
+			}
+	}else{	// No Pipe
+		if (execok() == 0)
+		{					 /* is it executable? */
+			status = fork(); /* yes; create a new process */
+
+			if (status == -1)
+			{ /* verify fork succeeded */
+				perror("fork");
+				exit(1);
+			}
+
+			if (status == 0)
+			{						/* in the child process... */
+				printf("Inside the child process \n");
+				words[nwds] = NULL; /* mark end of argument array */
+
+				status = execve(path, words, environ); /* try to execute it */
+
+				perror("execve"); /* we only get here if */
+				exit(0);		  /* execve failed... */
+			}
+
+			/*------------------------------------------------*/
+			/* The parent process (the shell) continues here. */
+			/*------------------------------------------------*/
+			printf("Inside the parent process \n");
+			wait(&status); /* wait for process to end */
 		}
-
-		if (status == 0)
-		{						/* in the child process... */
-			words[nwds] = NULL; /* mark end of argument array */
-
-			status = execve(path, words, environ); /* try to execute it */
-
-			perror("execve"); /* we only get here if */
-			exit(0);		  /* execve failed... */
+		else
+		{
+			/*----------------------------------------------------------*/
+			/* Command cannot be executed. Display appropriate message. */
+			/*----------------------------------------------------------*/
+			msg = "*** ERROR: '";
+			write(2, msg, strlen(msg));
+			write(2, words[0], strlen(words[0]));
+			msg = "' cannot be executed.\n";
+			write(2, msg, strlen(msg));
 		}
-
-		/*------------------------------------------------*/
-		/* The parent process (the shell) continues here. */
-		/*------------------------------------------------*/
-		wait(&status); /* wait for process to end */
-	}
-	else
-	{
-		/*----------------------------------------------------------*/
-		/* Command cannot be executed. Display appropriate message. */
-		/*----------------------------------------------------------*/
-		msg = "*** ERROR: '";
-		write(2, msg, strlen(msg));
-		write(2, words[0], strlen(words[0]));
-		msg = "' cannot be executed.\n";
-		write(2, msg, strlen(msg));
 	}
 }
 
@@ -267,9 +413,11 @@ int main(int argc, char *argv[])
 {
 	while (Getline())
 	{				  /* get command line */
-		if (!parse()) /* parse into words */
+		if (!parse()){	/* parse into words */
 			continue; /* some problem... */
-					  /*execute();	  /* execute the command */
+		} else{
+			execute();
+		}
 	}
 	write(1, "\n", 1);
 	return 0;

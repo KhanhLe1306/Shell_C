@@ -29,7 +29,7 @@ extern char **environ; /* environment */
 char line[MAXLINELEN + 1]; /* input line */
 char *words[NWORDS];	   /* ptrs to words from the command line */
 int nwds;				   /* # of words in the command line */
-char path[MAXWORDLEN];	   /* path to the command */
+char path[2][MAXWORDLEN];	   /* path to the command */
 char *argv[NWORDS + 1];	   /* argv structure for execve */
 
 int isPipe = 0;
@@ -130,7 +130,7 @@ int parse(void)
 	char *p;   /* pointer to current word */
 	char *msg; /* error message */
 
-	printf("Number of pipes: %d \n", numberOfPipe);
+	//printf("Number of pipes: %d \n", numberOfPipe);
 
 	if (numberOfPipe > 0)
 	{
@@ -146,8 +146,8 @@ int parse(void)
 			strcpy(pipeLine[index], pipe);
 			index++;
 			pipe = strtok(NULL, "|");
-			printf("Inside parse for PIPE : ");
-			printf("The command is: %s \n", pipeLine[index - 1]);
+			// printf("Inside parse for PIPE : ");
+			// printf("The command is: %s \n", pipeLine[index - 1]);
 
 			// split into words 
 			p = strtok(pipeLine[index - 1], " \t");
@@ -165,23 +165,23 @@ int parse(void)
 					write(2, msg, strlen(msg));
 					return 0;
 				}
-				printf("Word %d is %s \n", nwds + 1, p);
+				// printf("Word %d is %s \n", nwds + 1, p);
 				words[nwds] = p;		 /* save pointer to the word */
 				nwds++;					 /* increase the word count */
 				p = strtok(NULL, " \t"); /* get pointer to next word, if any */
 			}
 		}
 
-		printf("Outside of parse pipe \n");
+		// printf("Outside of parse pipe \n");
 
 		// Print out words
 
-		size_t numwords = sizeof(words) / sizeof(words[0]);
-		for (size_t i = 0; i < numwords; i++){
-			if(words[i] == NULL) break;
-			printf("Word : %s \n", words[i]);
-		}
-		printf("Slit at index: %d \n", pipeIndex);
+		// size_t numwords = sizeof(words) / sizeof(words[0]);
+		// for (size_t i = 0; i < numwords; i++){
+		// 	if(words[i] == NULL) break;
+		// 	printf("Word : %s \n", words[i]);
+		// }
+		//printf("Slit at index: %d \n", pipeIndex);
 
 		return 1;
 	}
@@ -225,8 +225,8 @@ int execok(void)
 	/*-------------------------------------------------------*/
 	if (strchr(words[0], '/') != NULL)
 	{							   /* if it has no '/' */
-		strcpy(path, words[0]);	   /* copy it to path */
-		return access(path, X_OK); /* return executable status */
+		strcpy(path[0], words[0]);	   /* copy it to path */
+		return access(path[0], X_OK); /* return executable status */
 	}
 
 	/*-------------------------------------------------------------------*/
@@ -241,10 +241,59 @@ int execok(void)
 	p = strtok(pathenv, ":");		  /* find first directory */
 	while (p != NULL)
 	{
-		strcpy(path, p);		/* copy directory to path */
-		strcat(path, "/");		/* append a slash */
-		strcat(path, words[0]); /* append executable's name */
-		if (access(path, X_OK) == 0)
+		strcpy(path[0], p);		/* copy directory to path */
+		strcat(path[0], "/");		/* append a slash */
+		strcat(path[0], words[0]); /* append executable's name */
+		if (access(path[0], X_OK) == 0)
+		{				   /* if it's executable */
+			free(pathenv); /* free PATH copy */
+			return 0;	   /* and return 0 */
+		}
+		p = strtok(NULL, ":"); /* get next directory */
+	}
+	free(pathenv); /* free PATH copy */
+	return -1;	   /* say we didn't find it */
+}
+
+int execokPipe(int k)
+{
+	char *p;
+	char *pathenv;
+
+	/*-------------------------------------------------------*/
+	/* If words[0] is already a relative or absolute path... */
+	/*-------------------------------------------------------*/
+	if (strchr(words[0], '/') != NULL)
+	{							   /* if it has no '/' */
+		if (k == 1){
+			strcpy(path[k], words[pipeIndex + 1]);	   /* copy it to path */
+		}else{
+			strcpy(path[k], words[0]);	   /* copy it to path */
+		}
+		return access(path[k], X_OK); /* return executable status */
+	}
+
+	/*-------------------------------------------------------------------*/
+	/* Otherwise search for a valid executable in the PATH directories.  */
+	/* We do this by getting a copy of the value of the PATH environment */
+	/* variable, and checking each directory identified there to see it  */
+	/* contains an executable file named word[0]. If a directory does    */
+	/* have such a file, return 0. Otherwise, return -1. In either case, */
+	/* always free the storage allocated for the value of PATH.          */
+	/*-------------------------------------------------------------------*/
+	pathenv = strdup(getenv("PATH")); /* get copy of PATH value */
+	p = strtok(pathenv, ":");		  /* find first directory */
+	while (p != NULL)
+	{
+		strcpy(path[k], p);		/* copy directory to path */
+		strcat(path[k], "/");		/* append a slash */
+		if (k == 1){
+			strcat(path[k], words[pipeIndex + 1]); /* append executable's name */
+			printf("Path %d : %s\n", k, words[pipeIndex + 1]);
+		}else{
+			strcat(path[k], words[0]); /* append executable's name */
+		}
+		if (access(path[k], X_OK) == 0)
 		{				   /* if it's executable */
 			free(pathenv); /* free PATH copy */
 			return 0;	   /* and return 0 */
@@ -266,107 +315,92 @@ int execute(void)
 	int i, j;
 	int status;
 	char *msg;
-	char *cmd[NWORDS];
-	char *cmd2[NWORDS];
+	char *cmd1[NWORDS]; // "echo Khanh Le"
+	char *cmd2[NWORDS];	// "wc -w
+
 
 	if(numberOfPipe > 0){	// Pipe
-		if (execok() == 0){
 
-			printf("Inside execute for PIPE: Horray! \n");
-			int fd[2];
-			if (pipe(fd) == -1){
-				printf("Error occured with opening pipe \n");
-				return 1;
-			}
-
-			status = fork();
-
-			if(status == 0){ // Child process
-				printf("Inside the first child process \n");
-				// dup2(fd[1], STDOUT_FILENO);
-				// close(fd[1]);
-				// close(fd[0]);
-				printf("Inside the first child process \n");
-				for(size_t i = 0; i < pipeIndex; i++){
-					printf("%s ", words[i]);
-					cmd[i] = words[i];
+		for(size_t i = 0; i < pipeIndex; i++){
+					//printf("%s ", words[i]);
+					cmd1[i] = words[i];
 				}
-				printf("\n");
-				printf("Inside the first child process \n");
-				cmd[pipeIndex] = NULL; // Mark the end
-				status = execve(path, cmd, environ); // Execute
-				perror("execve"); /* we only get here if */
-				exit(0);
-
-
-				// for (size_t i = pipeIndex; i < NWORDS; i++){
-				// 	if (words[i] != NULL){
-				// 		dprintf(fd[1], "%s ", words[i]);
-				// 	}else{
-				// 		break;
-				// 	}
-				// }
-
-				// for(size_t i = 0; i < pipeIndex; i++){
-				// 		cmd[i] = words[i];
-				// 	}
-
-				// cmd[pipeIndex] = NULL; // Mark the end
-
-				// for(size_t i = 0; i < pipeIndex; i++){
-				// 	printf("Word: %s \n", cmd[i]);
-				// }
-
-				// status = execve(path, cmd, environ); // Execute
-				// perror("execve"); /* we only get here if */
-				// exit(0);
-			}
-			// waitpid(status, NULL, 0);
-
-			int pid2 = fork();
-			if(pid2 < 0){
-				return 2;
-			}
 			
-			if(pid2 ==0){
-				printf("Inside the second child process \n");
-				dup2(fd[0], STDIN_FILENO);
-				int j = 0;
-				while(words[pipeIndex] != NULL){
-					printf("%s ", words[pipeIndex]);
-					cmd2[j] = words[pipeIndex];
+			cmd1[pipeIndex] = NULL; // Mark the end
+
+
+		int k = 0;
+				while(words[pipeIndex] != NULL && pipeIndex < nwds){
+					//printf("%s ", words[pipeIndex]);
+					cmd2[k] = words[pipeIndex];
 					pipeIndex++;
-					j++;
+					k++;
 				}
-				cmd2[j] = NULL; // Mark the end
-				pid2 = execve(path, cmd2, environ); // Execute
-				perror("execve"); /* we only get here if */
-				exit(0);
+				cmd2[k] = NULL; // Mark the end
 
-				close(fd[0]);
-				close(fd[1]);
-			}
+				if (execokPipe(0) == -1)
+				{
+					printf("Execokpipe 0 failed");
+					return 0;
+				}
 
-			// close(fd[1]);
-			// close(fd[0]);
-			// waitpid(pid2, NULL, 0);
-			// printf("This is parent process");
-			// return 0;
+					int fd[2];
 
-			//parent
-			close(fd[0]); // Close the parent read
-			printf("Inside the parent process \n");
+					pipe(fd);
 
-			
-			close(fd[1]);
-			wait(&status);
-			wait(&pid2);
+					int pid1 = fork();
 
-			int stat;
-			pid_t wpid = waitpid (status , &stat, 0 ); // wait for child to finish before exiting
-			return wpid == status && WIFEXITED(stat) ? WEXITSTATUS(stat) : 1;
-				
-			}
+					if (pid1 < 0)
+					{
+						close(fd[0]);
+						close(fd[1]);
+					}
+
+					if (pid1 == 0)
+					{ // Child process
+						//printf("Inside the first child process \n");
+						dup2(fd[1], STDOUT_FILENO);
+						close(fd[0]);
+						close(fd[1]);
+						execve(path[0], cmd1, environ); // Execute
+						perror("execve"); /* we only get here if */
+						exit(1);
+					}
+					wait(&pid1);
+
+					int pid2 = fork();
+					if (pid2 < 0)
+					{
+						close(fd[0]);
+						close(fd[1]);
+						kill(pid1, 9);
+						wait(NULL);
+						//continue;
+					}
+
+					if (pid2 == 0)
+					{
+						//close(0);
+						//printf("Inside the second child process \n");
+						dup2(fd[0], STDIN_FILENO);
+						close(fd[0]);
+						close(fd[1]);
+						execvp(cmd2[0], cmd2); // Execute
+						perror("execve");				/* we only get here if */
+						kill(pid1, 9);
+						exit(1);
+					}
+
+					close(fd[0]);
+					close(fd[1]);
+					wait(&pid1);
+					wait(&pid2);
+
+					// Main process
+					//printf("Inside the parent process \n");
+
+					pipeIndex = 0; // Reset pipeIndex
+					numberOfPipe = 0;			
 	}else{	// No Pipe
 		if (execok() == 0)
 		{					 /* is it executable? */
@@ -380,10 +414,12 @@ int execute(void)
 
 			if (status == 0)
 			{						/* in the child process... */
-				printf("Inside the child process \n");
+				//printf("Inside the child process \n");
 				words[nwds] = NULL; /* mark end of argument array */
 
-				status = execve(path, words, environ); /* try to execute it */
+				//printf("Path: %s \n", path[0]);
+
+				status = execve(path[0], words, environ); /* try to execute it */
 
 				perror("execve"); /* we only get here if */
 				exit(0);		  /* execve failed... */
@@ -392,7 +428,7 @@ int execute(void)
 			/*------------------------------------------------*/
 			/* The parent process (the shell) continues here. */
 			/*------------------------------------------------*/
-			printf("Inside the parent process \n");
+			//printf("Inside the parent process \n");
 			wait(&status); /* wait for process to end */
 		}
 		else
